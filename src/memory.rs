@@ -10,12 +10,12 @@ impl Memory {
     }
 
     pub fn read(&self, addr: u16) -> u8 {
-    	debug_assert!(addr < memory_map::PPU_START);
+    	debug_assert!(memory_map::RAM_START <= addr && addr < memory_map::PPU_START);
     	self.ram[(addr % memory_map::RAM_SIZE) as usize]
     }
 
     pub fn write(&mut self, addr: u16, value: u8) {
-    	debug_assert!(addr < memory_map::PPU_START);
+    	debug_assert!(memory_map::RAM_START <= addr && addr < memory_map::PPU_START);
     	self.ram[(addr % memory_map::RAM_SIZE) as usize] = value;
     }
 }

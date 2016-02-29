@@ -1,5 +1,5 @@
-All ROMs from:
-- http://wiki.nesdev.com/w/index.php/Emulator_tests
-
-See also:
-- http://www.qmtpro.com/~nes/misc/nestest.txt
+all_instrs.nes
+  http://wiki.nesdev.com/w/index.php/Emulator_tests
+nestest.nes, nestest.log
+  http://wiki.nesdev.com/w/index.php/Emulator_tests
+  http://www.qmtpro.com/~nes/misc/nestest.txt

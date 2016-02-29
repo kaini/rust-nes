@@ -1,12 +1,10 @@
-use cpu::Cpu;
+use cpu::{Cpu, STACK_START};
 use std::marker::PhantomData;
 use std::io::Write;
 
-const STACK_START: u16 = 0x0100;
-
 trait AddrMode {
-	fn decode(cpu: &Cpu) -> Self;
-	fn read(&self, cpu: &mut Cpu) -> u8;  // TODO remove mut?
+	fn decode(cpu: &mut Cpu) -> Self;
+	fn read(&self, cpu: &mut Cpu) -> u8;
 	fn write(&self, cpu: &mut Cpu, value: u8);
 	fn asm_str(cpu: &Cpu) -> String;
 }
@@ -14,7 +12,7 @@ trait AddrMode {
 // Access A.
 struct AddrAccumulator;
 impl AddrMode for AddrAccumulator {
-	fn decode(_: &Cpu) -> AddrAccumulator {
+	fn decode(_: &mut Cpu) -> AddrAccumulator {
 		AddrAccumulator
 	}
 	fn read(&self, cpu: &mut Cpu) -> u8 {
@@ -33,7 +31,7 @@ struct AddrImmediate {
 	value: u8,
 }
 impl AddrMode for AddrImmediate {
-	fn decode(cpu: &Cpu) -> AddrImmediate {
+	fn decode(cpu: &mut Cpu) -> AddrImmediate {
 		AddrImmediate { value: cpu.opcode8() }
 	}
 	fn read(&self, _: &mut Cpu) -> u8 {
@@ -52,7 +50,7 @@ struct AddrZeroPage {
 	addr: u16,
 }
 impl AddrMode for AddrZeroPage {
-	fn decode(cpu: &Cpu) -> AddrZeroPage {
+	fn decode(cpu: &mut Cpu) -> AddrZeroPage {
 		AddrZeroPage { addr: cpu.opcode8() as u16 }
 	}
 	fn read(&self, cpu: &mut Cpu) -> u8 {
@@ -71,7 +69,7 @@ struct AddrZeroPageX {
 	addr: u16,
 }
 impl AddrMode for AddrZeroPageX {
-	fn decode(cpu: &Cpu) -> AddrZeroPageX {
+	fn decode(cpu: &mut Cpu) -> AddrZeroPageX {
 		AddrZeroPageX { addr: (cpu.opcode8().wrapping_add(cpu.registers().x)) as u16 }
 	}
 	fn read(&self, cpu: &mut Cpu) -> u8 {
@@ -90,7 +88,7 @@ struct AddrZeroPageY {
 	addr: u16,
 }
 impl AddrMode for AddrZeroPageY {
-	fn decode(cpu: &Cpu) -> AddrZeroPageY {
+	fn decode(cpu: &mut Cpu) -> AddrZeroPageY {
 		AddrZeroPageY { addr: (cpu.opcode8().wrapping_add(cpu.registers().y)) as u16 }
 	}
 	fn read(&self, cpu: &mut Cpu) -> u8 {
@@ -109,7 +107,7 @@ struct AddrAbsolute {
 	addr: u16,
 }
 impl AddrMode for AddrAbsolute {
-	fn decode(cpu: &Cpu) -> AddrAbsolute {
+	fn decode(cpu: &mut Cpu) -> AddrAbsolute {
 		AddrAbsolute { addr: cpu.opcode16() }
 	}
 	fn read(&self, cpu: &mut Cpu) -> u8 {
@@ -128,7 +126,7 @@ struct AddrAbsoluteX {
 	addr: u16,
 }
 impl AddrMode for AddrAbsoluteX {
-	fn decode(cpu: &Cpu) -> AddrAbsoluteX {
+	fn decode(cpu: &mut Cpu) -> AddrAbsoluteX {
 		let offset = cpu.registers().x as u16;
 		AddrAbsoluteX { addr: cpu.opcode16().wrapping_add(offset) }
 	}
@@ -148,7 +146,7 @@ struct AddrAbsoluteY {
 	addr: u16,
 }
 impl AddrMode for AddrAbsoluteY {
-	fn decode(cpu: &Cpu) -> AddrAbsoluteY {
+	fn decode(cpu: &mut Cpu) -> AddrAbsoluteY {
 		let offset = cpu.registers().y as u16;
 		AddrAbsoluteY { addr: cpu.opcode16().wrapping_add(offset) }
 	}
@@ -168,7 +166,7 @@ struct AddrIndirectX {
 	addr: u16,
 }
 impl AddrMode for AddrIndirectX {
-	fn decode(cpu: &Cpu) -> AddrIndirectX {
+	fn decode(cpu: &mut Cpu) -> AddrIndirectX {
 		let iaddr = cpu.opcode8().wrapping_add(cpu.registers().x);
 		let addr_lo = cpu.read_memory(iaddr as u16) as u16;
 		let addr_hi = cpu.read_memory(iaddr.wrapping_add(1) as u16) as u16;
@@ -190,7 +188,7 @@ struct AddrIndirectY {
 	addr: u16,
 }
 impl AddrMode for AddrIndirectY {
-	fn decode(cpu: &Cpu) -> AddrIndirectY {
+	fn decode(cpu: &mut Cpu) -> AddrIndirectY {
 		let iaddr = cpu.opcode8();
 		let addr_lo = cpu.read_memory(iaddr as u16) as u16;
 		let addr_hi = cpu.read_memory(iaddr.wrapping_add(1) as u16) as u16;
@@ -236,6 +234,34 @@ impl<A: AddrMode> Instruction for OpADC<A> {
 	}
 }
 
+// AND and LSR A.
+struct OpALR<A: AddrMode> {
+	phantom: PhantomData<A>,
+}
+impl<A: AddrMode> Instruction for OpALR<A> {
+	fn execute(&self, cpu: &mut Cpu) {
+		OpAND::<A>{ phantom: PhantomData }.execute(cpu);
+		OpLSR::<AddrAccumulator>{ phantom: PhantomData }.execute(cpu);
+	}
+	fn asm_str(&self, cpu: &Cpu) -> String {
+		format!("ALR {}", A::asm_str(cpu))
+	}
+}
+
+// AND, then copy flags N to C.
+struct OpANC<A: AddrMode> {
+	phantom: PhantomData<A>,
+}
+impl<A: AddrMode> Instruction for OpANC<A> {
+	fn execute(&self, cpu: &mut Cpu) {
+		OpAND::<A>{ phantom: PhantomData }.execute(cpu);
+		cpu.registers_mut().p.carry = cpu.registers().p.negative;
+	}
+	fn asm_str(&self, cpu: &Cpu) -> String {
+		format!("ANC {}", A::asm_str(cpu))
+	}
+}
+
 // Logical and.
 struct OpAND<A: AddrMode> {
 	phantom: PhantomData<A>,
@@ -249,6 +275,26 @@ impl<A: AddrMode> Instruction for OpAND<A> {
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("AND {}", A::asm_str(cpu))
+	}
+}
+
+// AND and ROR A, with C to bit 6 and V bit 6 xor bit 5.
+struct OpARR<A: AddrMode> {
+	phantom: PhantomData<A>,
+}
+impl<A: AddrMode> Instruction for OpARR<A> {
+	fn execute(&self, cpu: &mut Cpu) {
+		let result = 
+			((cpu.registers().a & A::decode(cpu).read(cpu)) >> 1) |
+			if cpu.registers().p.carry { 0b10000000 } else { 0 };
+		cpu.registers_mut().a = result;
+		cpu.registers_mut().p.zero = result == 0;
+		cpu.registers_mut().p.carry = result & 0b01000000 != 0;
+		cpu.registers_mut().p.negative =
+			(result & 0b01000000 != 0) != (result & 0b00100000 != 0);
+	}
+	fn asm_str(&self, cpu: &Cpu) -> String {
+		format!("ARR {}", A::asm_str(cpu))
 	}
 }
 
@@ -268,6 +314,21 @@ impl<A: AddrMode> Instruction for OpASL<A> {
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("ASL {}", A::asm_str(cpu))
+	}
+}
+
+// X = (A & X) - src (without borrow)
+struct OpAXS<A: AddrMode> {
+	phantom: PhantomData<A>,
+}
+impl<A: AddrMode> Instruction for OpAXS<A> {
+	fn execute(&self, cpu: &mut Cpu) {
+		cpu.registers_mut().a = cpu.registers().a & cpu.registers().x;
+		cpu.registers_mut().p.carry = true;
+		OpSBC::<A>{ phantom: PhantomData }.execute(cpu);
+	}
+	fn asm_str(&self, cpu: &Cpu) -> String {
+		format!("AXS {}", A::asm_str(cpu))
 	}
 }
 
@@ -375,8 +436,8 @@ impl Instruction for OpBPL {
 // Force interrupt
 struct OpBRK;
 impl Instruction for OpBRK {
-	fn execute(&self, _: &mut Cpu) {
-		unimplemented!();  // TODO
+	fn execute(&self, cpu: &mut Cpu) {
+		cpu.jump_to_interrupt(true);
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
 		String::from("BRK")
@@ -1205,19 +1266,19 @@ impl Instruction for OpTODO {
 
 pub const INSTRUCTION_SIZES: [usize; 256] = [
 	//         0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
-	/* 0x00 */ 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+	/* 0x00 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
 	/* 0x10 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
-	/* 0x20 */ 3, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+	/* 0x20 */ 3, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
 	/* 0x30 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
-	/* 0x40 */ 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+	/* 0x40 */ 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
 	/* 0x50 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
-	/* 0x60 */ 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+	/* 0x60 */ 1, 2, 1, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
 	/* 0x70 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
 	/* 0x80 */ 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
 	/* 0x90 */ 2, 2, 1, 1, 2, 2, 2, 2, 1, 3, 1, 1, 1, 3, 1, 1,
-	/* 0xA0 */ 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+	/* 0xA0 */ 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
 	/* 0xB0 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 1, 3, 3, 3, 3,
-	/* 0xC0 */ 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 1, 3, 3, 3, 3,
+	/* 0xC0 */ 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
 	/* 0xD0 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
 	/* 0xE0 */ 2, 2, 2, 2, 2, 2, 2, 2, 1, 2, 1, 2, 3, 3, 3, 3,
 	/* 0xF0 */ 2, 2, 1, 2, 2, 2, 2, 2, 1, 3, 1, 3, 3, 3, 3, 3,
@@ -1236,7 +1297,7 @@ pub const INSTRUCTIONS: [&'static (Instruction + Sync); 256] = [
 	/* 8 */ &OpPHP,
 	/* 9 */ &OpORA::<AddrImmediate>{ phantom: PhantomData },
 	/* A */ &OpASL::<AddrAccumulator>{ phantom: PhantomData },
-	/* B */ &OpTODO,
+	/* B */ &OpANC::<AddrImmediate>{ phantom: PhantomData },
 	/* C */ &OpNOPMulti::<AddrAbsolute>{ phantom: PhantomData },
 	/* D */ &OpORA::<AddrAbsolute>{ phantom: PhantomData },
 	/* E */ &OpASL::<AddrAbsolute>{ phantom: PhantomData },
@@ -1272,7 +1333,7 @@ pub const INSTRUCTIONS: [&'static (Instruction + Sync); 256] = [
 	/* 8 */ &OpPLP,
 	/* 9 */ &OpAND::<AddrImmediate>{ phantom: PhantomData },
 	/* A */ &OpROL::<AddrAccumulator>{ phantom: PhantomData },
-	/* B */ &OpTODO,
+	/* B */ &OpANC::<AddrImmediate>{ phantom: PhantomData },
 	/* C */ &OpBIT::<AddrAbsolute>{ phantom: PhantomData },
 	/* D */ &OpAND::<AddrAbsolute>{ phantom: PhantomData },
 	/* E */ &OpROL::<AddrAbsolute>{ phantom: PhantomData },
@@ -1308,7 +1369,7 @@ pub const INSTRUCTIONS: [&'static (Instruction + Sync); 256] = [
 	/* 8 */ &OpPHA,
 	/* 9 */ &OpEOR::<AddrImmediate>{ phantom: PhantomData },
 	/* A */ &OpLSR::<AddrAccumulator>{ phantom: PhantomData },
-	/* B */ &OpTODO,
+	/* B */ &OpALR::<AddrImmediate>{ phantom: PhantomData },
 	/* C */ &OpJMPAbsolute,
 	/* D */ &OpEOR::<AddrAbsolute>{ phantom: PhantomData },
 	/* E */ &OpLSR::<AddrAbsolute>{ phantom: PhantomData },
@@ -1344,7 +1405,7 @@ pub const INSTRUCTIONS: [&'static (Instruction + Sync); 256] = [
 	/* 8 */ &OpPLA,
 	/* 9 */ &OpADC::<AddrImmediate>{ phantom: PhantomData },
 	/* A */ &OpROR::<AddrAccumulator>{ phantom: PhantomData },
-	/* B */ &OpTODO,
+	/* B */ &OpARR::<AddrImmediate>{ phantom: PhantomData },
 	/* C */ &OpJMPIndirect,
 	/* D */ &OpADC::<AddrAbsolute>{ phantom: PhantomData },
 	/* E */ &OpROR::<AddrAbsolute>{ phantom: PhantomData },
@@ -1416,7 +1477,7 @@ pub const INSTRUCTIONS: [&'static (Instruction + Sync); 256] = [
 	/* 8 */ &OpTAY,
 	/* 9 */ &OpLDA::<AddrImmediate>{ phantom: PhantomData },
 	/* A */ &OpTAX,
-	/* B */ &OpTODO,
+	/* B */ &OpLAX::<AddrImmediate>{ phantom: PhantomData },
 	/* C */ &OpLDY::<AddrAbsolute>{ phantom: PhantomData },
 	/* D */ &OpLDA::<AddrAbsolute>{ phantom: PhantomData },
 	/* E */ &OpLDX::<AddrAbsolute>{ phantom: PhantomData },
@@ -1452,7 +1513,7 @@ pub const INSTRUCTIONS: [&'static (Instruction + Sync); 256] = [
 	/* 8 */ &OpINY,
 	/* 9 */ &OpCMP::<AddrImmediate>{ phantom: PhantomData },
 	/* A */ &OpDEX,
-	/* B */ &OpTODO,
+	/* B */ &OpAXS::<AddrImmediate>{ phantom: PhantomData },
 	/* C */ &OpCPY::<AddrAbsolute>{ phantom: PhantomData },
 	/* D */ &OpCMP::<AddrAbsolute>{ phantom: PhantomData },
 	/* E */ &OpDEC::<AddrAbsolute>{ phantom: PhantomData },

@@ -1,8 +1,10 @@
 use memory::Memory;
 use memory_map;
-use rom::Rom;
+use cartridge::Cartridge;
 use instructions::{INSTRUCTION_SIZES, INSTRUCTIONS};
 use std::io::Write;
+
+pub const STACK_START: u16 = 0x0100;
 
 // Status register
 pub struct Status {
@@ -10,7 +12,6 @@ pub struct Status {
 	pub zero: bool,
 	pub interrupt: bool,
 	pub decimal: bool,
-	pub break_: bool,
 	pub overflow: bool,
 	pub negative: bool,
 }
@@ -20,15 +21,15 @@ impl Status {
 		// TODO initial values
 		let mut p = Status {
 			carry: false, zero: false, interrupt: false, decimal: false,
-			break_: false, overflow: false, negative: false
+			overflow: false, negative: false
 		};
-		p.set_value(0x24);
+		p.set_value(0x34);
 		p
 	}
 
-	pub fn value(&self, bit4: bool) -> u8 {
+	pub fn value(&self, break_flag: bool) -> u8 {
 		0b00100000 |
-			if bit4           { 0b00010000 } else { 0 } |
+			if break_flag     { 0b00010000 } else { 0 } |
 			if self.carry     { 0b00000001 } else { 0 } |
 			if self.zero      { 0b00000010 } else { 0 } |
 			if self.interrupt { 0b00000100 } else { 0 } |
@@ -64,7 +65,7 @@ impl Registers {
 			a: 0,
 			x: 0,
 			y: 0,
-			pc: 0xC000,
+			pc: 0,
 			s: 0xFD,
 			p: Status::new()
 		}
@@ -83,20 +84,46 @@ impl Registers {
 pub struct Cpu {
 	registers: Registers,
 	memory: Memory,
-	rom: Rom,
+	cartridge: Box<Cartridge>,
 	opcode8: u8,
 	opcode16: u16,
 }
 
 impl Cpu {
-	pub fn new(rom: Rom) -> Cpu {
-		Cpu {
+	pub fn new(cartridge: Box<Cartridge>) -> Cpu {
+		let mut it = Cpu {
 			registers: Registers::new(),
 			memory: Memory::new(),
-			rom: rom,
+			cartridge: cartridge,
 			opcode8: 0,
 			opcode16: 0,
-		}
+		};
+		it.reset();
+		it
+	}
+
+	fn reset(&mut self) {
+		let addr_lo = self.read_memory(0xFFFC) as u16;
+		let addr_hi = self.read_memory(0xFFFD) as u16;
+		self.registers.pc = (addr_hi << 8) | addr_lo;
+	}
+
+	pub fn jump_to_interrupt(&mut self, break_flag: bool) {
+		let mut sp = self.registers.s;
+		let old_pc = self.registers.pc;
+		let old_p = self.registers.p.value(break_flag);
+		self.write_memory(STACK_START + sp as u16, (old_pc >> 8) as u8);
+		sp = sp.wrapping_sub(1);
+		self.write_memory(STACK_START + sp as u16, old_pc as u8);
+		sp = sp.wrapping_sub(1);
+		self.write_memory(STACK_START + sp as u16, old_p);
+		sp = sp.wrapping_sub(1);
+
+		let addr_lo = self.read_memory(0xFFFE) as u16;
+		let addr_hi = self.read_memory(0xFFFF) as u16;
+		self.registers.pc = (addr_hi << 8) | addr_lo;
+		self.registers.p.interrupt = true;
+		self.registers.s = sp;
 	}
 
 	pub fn registers_mut(&mut self) -> &mut Registers {
@@ -111,25 +138,23 @@ impl Cpu {
 		if address < memory_map::PPU_START {
 			self.memory.write(address, value);
 		} else if address < memory_map::APU_IO_START {
-			println!("WARNING: Dummy write from PPU.");
+			// TODO
 		} else if address < memory_map::CARTRIDGE_START {
-			println!("WARNING: Dummy write from APU/IO.");
+			// TODO
 		} else {
-			self.rom.write(address, value);
+			self.cartridge.write_cpu(address, value);
 		}
 	}
 
-	pub fn read_memory(&self, address: u16) -> u8 {
+	pub fn read_memory(&mut self, address: u16) -> u8 {
 		if address < memory_map::PPU_START {
 			self.memory.read(address)
 		} else if address < memory_map::APU_IO_START {
-			println!("WARNING: Dummy read from PPU.");
 			0  // TODO
 		} else if address < memory_map::CARTRIDGE_START {
-			println!("WARNING: Dummy read from APU/IO.");
 			0  // TODO
 		} else {
-			self.rom.read(address)
+			self.cartridge.read_cpu(address)
 		}
 	}
 
