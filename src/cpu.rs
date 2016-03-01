@@ -3,6 +3,7 @@ use memory_map;
 use cartridge::Cartridge;
 use instructions::{INSTRUCTION_SIZES, INSTRUCTIONS};
 use std::io::Write;
+use ppu::Ppu;
 
 pub const STACK_START: u16 = 0x0100;
 
@@ -83,20 +84,22 @@ impl Registers {
 // * 4020 - FFFF cartridge space
 pub struct Cpu {
 	registers: Registers,
-	memory: Memory,
-	cartridge: Box<Cartridge>,
 	opcode8: u8,
 	opcode16: u16,
+	memory: Memory,
+	cartridge: Box<Cartridge>,
+	ppu: Ppu,
 }
 
 impl Cpu {
 	pub fn new(cartridge: Box<Cartridge>) -> Cpu {
 		let mut it = Cpu {
 			registers: Registers::new(),
-			memory: Memory::new(),
-			cartridge: cartridge,
 			opcode8: 0,
 			opcode16: 0,
+			memory: Memory::new(),
+			cartridge: cartridge,
+			ppu: Ppu::new(),
 		};
 		it.reset();
 		it
@@ -138,7 +141,7 @@ impl Cpu {
 		if address < memory_map::PPU_START {
 			self.memory.write(address, value);
 		} else if address < memory_map::APU_IO_START {
-			// TODO
+			self.ppu.write(address, value);
 		} else if address < memory_map::CARTRIDGE_START {
 			// TODO
 		} else {
@@ -150,9 +153,10 @@ impl Cpu {
 		if address < memory_map::PPU_START {
 			self.memory.read(address)
 		} else if address < memory_map::APU_IO_START {
-			0  // TODO
+			self.ppu.read(address)
 		} else if address < memory_map::CARTRIDGE_START {
-			0  // TODO
+			// TODO
+			0
 		} else {
 			self.cartridge.read_cpu(address)
 		}
