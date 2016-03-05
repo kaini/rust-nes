@@ -1,16 +1,33 @@
+extern crate sdl2;
+
 mod cartridge;
 mod cpu;
-mod memory;
-mod instructions;
-mod memory_map;
 mod ppu;
-mod mappers;
+mod apu;
 
 use cartridge::load_rom;
-use cpu::Cpu;
+use cpu::{Cpu, Hardware};
+use ppu::{Ppu, PpuOutput};
+use apu::Apu;
 use std::env;
 use std::borrow::Borrow;
-use std::io::{stderr, Write};
+use sdl2::video::WindowBuilder;
+use sdl2::event::Event;
+use sdl2::render::{RendererBuilder, Renderer};
+use sdl2::pixels::Color;
+use sdl2::rect::Rect;
+
+struct SdlPpuOutput<'a> {
+	renderer: Renderer<'a>,
+}
+
+impl<'a> PpuOutput for SdlPpuOutput<'a> {
+	fn set_pixel(&mut self, x: usize, y: usize, r: u8, g: u8, b: u8) {
+		self.renderer.set_draw_color(Color::RGB(r, g, b));
+		self.renderer.fill_rect(Rect::new(
+			x as i32 * 4, y as i32 * 4, 4, 4)).unwrap();
+	}
+}
 
 fn main() {
 	println!("+---------------------------+");
@@ -32,17 +49,43 @@ fn main() {
 	}
 
 	println!("Loading ROM {}.", rom_path);
-	let rom = match load_rom(rom_path.borrow()) {
+	let mut cartridge = match load_rom(rom_path.borrow()) {
 		Ok(rom) => rom,
 		Err(err) => { println!("Could not load ROM: {}", err); return; }
 	};
 
-	let mut instr_log_file = stderr();
-	let mut instr_log = Option::Some(&mut instr_log_file as &mut Write);
+	let mut instr_log = Option::None;
+	let mut cpu = Cpu::new();
+	let mut hardware = Hardware {
+		ppu: &mut Ppu::new(),
+		apu: &mut Apu,
+		cartridge: &mut *cartridge,
+	};
+	cpu.jump_to_start(&mut hardware);
 
-	let mut cpu = Cpu::new(rom);
-	for _ in 0..10 {
-		cpu.tick(&mut instr_log);
+	let sdl = sdl2::init().unwrap();
+	let sdl_video = sdl.video().unwrap();
+	let mut sdl_event_pump = sdl.event_pump().unwrap();
+	let win = WindowBuilder::new(&sdl_video, "Kaini's NES Emulator", 256 * 4, 240 * 4).build().unwrap();
+	let mut output = SdlPpuOutput{ renderer: RendererBuilder::new(win).build().unwrap() };
+
+	let mut quit = false;
+	while !quit {
+		for _ in 0..100 {
+			cpu.tick(&mut hardware, &mut instr_log);
+			hardware.ppu.tick(hardware.cartridge, &mut output);
+			hardware.ppu.tick(hardware.cartridge, &mut output);
+			hardware.ppu.tick(hardware.cartridge, &mut output);
+		}
+
+		output.renderer.present();
+
+		for event in sdl_event_pump.poll_iter() {
+			match event {
+				Event::Quit{..} => { quit = true; }
+				_ => {}
+			}
+		}
 	}
 }
 
@@ -51,19 +94,25 @@ mod test {
 	use cartridge::load_rom;
 	use std::io::{Write, Read, BufWriter};
 	use std::fs::File;
-	use cpu::Cpu;
+	use cpu::{Hardware, Cpu};
+	use ppu::Ppu;
+	use apu::Apu;
 
 	#[test]
 	fn nestest_rom() {
 		// Execute ROM
-		let rom = load_rom("roms/nestest.nes").unwrap();
+		let mut hardware = Hardware {
+			ppu: &mut Ppu::new(),
+			apu: &mut Apu,
+			cartridge: &mut *load_rom("roms/nestest.nes").unwrap(),
+		};
 		let mut log_buffer = Vec::new();
-		let mut cpu = Cpu::new(rom);
+		let mut cpu = Cpu::new();
 		cpu.registers_mut().pc = 0xC000;
 		{
 			let mut instr_log = Option::Some(&mut log_buffer as &mut Write);
 			for _ in 0..8992 {
-				cpu.tick(&mut instr_log);
+				cpu.tick(&mut hardware, &mut instr_log);
 			}
 		}
 		let my_log = String::from_utf8(log_buffer).unwrap();
@@ -117,23 +166,28 @@ mod test {
 			#[test]
 			fn $test_name() {
 				// load
-				let rom = load_rom(&format!("roms/{}.nes", $rom_name)).unwrap();
+				let mut hardware = Hardware {
+					ppu: &mut Ppu::new(),
+					apu: &mut Apu,
+					cartridge: &mut *load_rom(&format!("roms/{}.nes", $rom_name)).unwrap(),
+				};
 				let mut log_buffer = BufWriter::new(File::create(format!("logs/{}.log", $rom_name)).unwrap());
 				let instr_log = &mut Option::Some(&mut log_buffer as &mut Write);
 				
 				// execute
-				let mut cpu = Cpu::new(rom);
-				cpu.write_memory(0x6000, 0x80);
-				cpu.write_memory(0x6004, 0);
-				while cpu.read_memory(0x6000) == 0x80 {
-					cpu.tick(instr_log);
+				let mut cpu = Cpu::new();
+				cpu.jump_to_start(&mut hardware);
+				cpu.write_memory(&mut hardware, 0x6000, 0x80);
+				cpu.write_memory(&mut hardware, 0x6004, 0);
+				while cpu.read_memory(&mut hardware, 0x6000) == 0x80 {
+					cpu.tick(&mut hardware, instr_log);
 				}
 
 				// read message
 				let mut message = Vec::new();
 				let mut addr = 0x6004;
 				loop {
-					let byte = cpu.read_memory(addr);
+					let byte = cpu.read_memory(&mut hardware, addr);
 					addr += 1;
 					if byte == 0 {
 						break;
@@ -143,7 +197,7 @@ mod test {
 				println!("{}", String::from_utf8(message).unwrap());
 				
 				// check
-				assert_eq!(0, cpu.read_memory(0x6000));
+				assert_eq!(0, cpu.read_memory(&mut hardware, 0x6000));
 			}
 		}
 	}

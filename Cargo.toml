@@ -4,4 +4,4 @@ version = "0.1.0"
 authors = ["Michael Kainer <stuff@pushrax.com>"]
 
 [dependencies]
-
+sdl2 = "0.16.0"

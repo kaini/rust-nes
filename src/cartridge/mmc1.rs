@@ -1,5 +1,5 @@
-use cartridge::Cartridge;
-use memory_map;
+use cartridge::{Cartridge, MirrorMode};
+use cpu::memory_map;
 
 // Nintendo MMC1
 // CPU:
@@ -16,12 +16,14 @@ pub struct Mmc1 {
 	chr_bank1: u8,
 	prg_bank: u8,
 	shifter: u8,
+	ppu_ram: [u8; 2048],
 }
 
 impl Mmc1 {
 	// TODO validate input!!! (ram size ...)
 	pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, ram_size: usize) -> Mmc1 {
 		assert!(prg_rom.len() == 16 * 16 * 1024);
+		assert!(chr_rom.len() == 128 * 1024);
 		assert!(ram_size == 8 * 1024);
 		Mmc1 {
 			prg_rom: prg_rom,
@@ -32,6 +34,7 @@ impl Mmc1 {
 			chr_bank1: 0,
 			prg_bank: 0,
 			shifter: 0b00100000,
+			ppu_ram: [0; 2048],
 		}
 	}
 }
@@ -114,6 +117,42 @@ impl Cartridge for Mmc1 {
 				}
 			}
 		}
+	}
+
+	fn read_ppu(&mut self, addr: u16) -> u8 {
+		debug_assert!(addr <= 0x3EFF);
+		if addr <= 0x1FFF {
+			if self.control & 0b10000 == 0 {
+				// 8 KiB mode
+				let bank = (self.chr_bank0 >> 1) as usize;
+				self.chr_rom[bank * 8 * 1024 + addr as usize]
+			} else {
+				// 4 KiB mode
+				if addr <= 0x0FFF {
+					self.chr_rom[(self.chr_bank0 as usize) * 4 * 1024 + addr as usize]
+				} else {
+					self.chr_rom[(self.chr_bank1 as usize) * 4 * 1024 + addr as usize - 0x1000]
+				}
+			}
+		} else if addr <= 0x2FFF {
+			self.ppu_ram[(addr as usize - 0x1000) & 0x7FF]
+		} else {
+			self.ppu_ram[(addr as usize - 0x2000) & 0x7FF]
+		}
+	}
+
+	fn write_ppu(&mut self, addr: u16, value: u8) {
+		debug_assert!(addr <= 0x3EFF);
+		if addr <= 0x1FFF {
+		} else if addr <= 0x2FFF {
+			self.ppu_ram[(addr as usize - 0x1000) & 0x7FF] = value;
+		} else {
+			self.ppu_ram[(addr as usize - 0x2000) & 0x7FF] = value;
+		}
+	}
+
+	fn mirror_mode(&self) -> MirrorMode {
+		unimplemented!()
 	}
 }
 
@@ -209,6 +248,85 @@ mod test {
 			a.write_cpu(0xE000, 0);
 			assert_eq!(i, a.read_cpu(0x8001));
 			assert_eq!(15, a.read_cpu(0xC001));
+		}
+	}
+
+	#[test]
+	fn ppu_ram() {
+		let mut a = Mmc1::new(vec![123; 256 * 1024], vec![0; 128 * 1024], 0x2000);
+		a.write_ppu(0x2002, 2);
+		a.write_ppu(0x3403, 3);
+		assert_eq!(2, a.read_ppu(0x2002));
+		assert_eq!(0, a.read_ppu(0x2402));
+		assert_eq!(2, a.read_ppu(0x2802));
+		assert_eq!(0, a.read_ppu(0x2C02));
+		assert_eq!(0, a.read_ppu(0x2003));
+		assert_eq!(3, a.read_ppu(0x2403));
+		assert_eq!(0, a.read_ppu(0x2803));
+		assert_eq!(3, a.read_ppu(0x2C03));
+		assert_eq!(2, a.read_ppu(0x3002));
+		assert_eq!(0, a.read_ppu(0x3402));
+		assert_eq!(2, a.read_ppu(0x3802));
+		assert_eq!(0, a.read_ppu(0x3C02));
+		assert_eq!(0, a.read_ppu(0x3003));
+		assert_eq!(3, a.read_ppu(0x3403));
+		assert_eq!(0, a.read_ppu(0x3803));
+		assert_eq!(3, a.read_ppu(0x3C03));
+	}
+
+	#[test]
+	fn ppu_rom() {
+		let mut rom = vec![123; 128 * 1024];
+		for i in 0..32 {
+			rom[i * 4 * 1024 + 2] = i as u8;
+		}
+
+		let mut a = Mmc1::new(vec![123; 256 * 1024], rom, 0x2000);
+		
+		// 8 switch mode
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 0);
+		for i in 0..32 {
+			a.write_cpu(0x8001, i >> 0);
+			a.write_cpu(0x8001, i >> 1);
+			a.write_cpu(0x8001, i >> 2);
+			a.write_cpu(0x8001, i >> 3);
+			a.write_cpu(0xA001, i >> 4);
+			for j in 0..32 {
+				a.write_cpu(0x8001, j >> 0);
+				a.write_cpu(0x8001, j >> 1);
+				a.write_cpu(0x8001, j >> 2);
+				a.write_cpu(0x8001, j >> 3);
+				a.write_cpu(0xC001, j >> 4);
+				assert_eq!(i / 2 * 2, a.read_ppu(0x0002));
+				assert_eq!(i / 2 * 2 + 1, a.read_ppu(0x1002));
+			}
+		}
+
+		// 4 switch mode
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 0);
+		a.write_cpu(0x8001, 1);
+		for i in 0..32 {
+			a.write_cpu(0x8001, i >> 0);
+			a.write_cpu(0x8001, i >> 1);
+			a.write_cpu(0x8001, i >> 2);
+			a.write_cpu(0x8001, i >> 3);
+			a.write_cpu(0xA001, i >> 4);
+			for j in 0..32 {
+				a.write_cpu(0x8001, j >> 0);
+				a.write_cpu(0x8001, j >> 1);
+				a.write_cpu(0x8001, j >> 2);
+				a.write_cpu(0x8001, j >> 3);
+				a.write_cpu(0xC001, j >> 4);
+				assert_eq!(i, a.read_ppu(0x0002));
+				assert_eq!(j, a.read_ppu(0x1002));
+			}
 		}
 	}
 }

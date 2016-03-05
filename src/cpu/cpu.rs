@@ -1,10 +1,18 @@
-use memory::Memory;
-use memory_map;
+use cpu::memory_map;
 use cartridge::Cartridge;
-use instructions::{INSTRUCTION_SIZES, INSTRUCTIONS};
+use cpu::instructions::{INSTRUCTION_SIZES, INSTRUCTIONS};
 use std::io::Write;
 use ppu::Ppu;
+use apu::Apu;
 
+// Tuple to pass the whole hardware to the CPU.
+pub struct Hardware<'a> {
+	pub apu: &'a mut Apu,
+	pub ppu: &'a mut Ppu,
+	pub cartridge: &'a mut Cartridge
+}
+
+// Start of the stack
 pub const STACK_START: u16 = 0x0100;
 
 // Status register
@@ -73,7 +81,7 @@ impl Registers {
 	}
 }
 
-// CPU and "root object" of the NES. Everything ends up here at the end.
+// CPU of the NES.
 //
 // The memory map is as follows:
 // * 0000 - 07FF is RAM
@@ -86,44 +94,38 @@ pub struct Cpu {
 	registers: Registers,
 	opcode8: u8,
 	opcode16: u16,
-	memory: Memory,
-	cartridge: Box<Cartridge>,
-	ppu: Ppu,
+	ram: [u8; memory_map::RAM_SIZE as usize],
 }
 
 impl Cpu {
-	pub fn new(cartridge: Box<Cartridge>) -> Cpu {
-		let mut it = Cpu {
+	pub fn new() -> Cpu {
+		Cpu {
 			registers: Registers::new(),
 			opcode8: 0,
 			opcode16: 0,
-			memory: Memory::new(),
-			cartridge: cartridge,
-			ppu: Ppu::new(),
-		};
-		it.reset();
-		it
+			ram: [0; memory_map::RAM_SIZE as usize],
+		}
 	}
 
-	fn reset(&mut self) {
-		let addr_lo = self.read_memory(0xFFFC) as u16;
-		let addr_hi = self.read_memory(0xFFFD) as u16;
+	pub fn jump_to_start(&mut self, hw: &mut Hardware) {
+		let addr_lo = self.read_memory(hw, 0xFFFC) as u16;
+		let addr_hi = self.read_memory(hw, 0xFFFD) as u16;
 		self.registers.pc = (addr_hi << 8) | addr_lo;
 	}
 
-	pub fn jump_to_interrupt(&mut self, break_flag: bool) {
+	pub fn jump_to_interrupt(&mut self, hw: &mut Hardware, break_flag: bool) {
 		let mut sp = self.registers.s;
 		let old_pc = self.registers.pc;
 		let old_p = self.registers.p.value(break_flag);
-		self.write_memory(STACK_START + sp as u16, (old_pc >> 8) as u8);
+		self.write_memory(hw, STACK_START + sp as u16, (old_pc >> 8) as u8);
 		sp = sp.wrapping_sub(1);
-		self.write_memory(STACK_START + sp as u16, old_pc as u8);
+		self.write_memory(hw, STACK_START + sp as u16, old_pc as u8);
 		sp = sp.wrapping_sub(1);
-		self.write_memory(STACK_START + sp as u16, old_p);
+		self.write_memory(hw, STACK_START + sp as u16, old_p);
 		sp = sp.wrapping_sub(1);
 
-		let addr_lo = self.read_memory(0xFFFE) as u16;
-		let addr_hi = self.read_memory(0xFFFF) as u16;
+		let addr_lo = self.read_memory(hw, 0xFFFE) as u16;
+		let addr_hi = self.read_memory(hw, 0xFFFF) as u16;
 		self.registers.pc = (addr_hi << 8) | addr_lo;
 		self.registers.p.interrupt = true;
 		self.registers.s = sp;
@@ -137,28 +139,29 @@ impl Cpu {
 		&self.registers
 	}
 
-	pub fn write_memory(&mut self, address: u16, value: u8) {
+	pub fn write_memory(&mut self, hw: &mut Hardware, address: u16, value: u8) {
 		if address < memory_map::PPU_START {
-			self.memory.write(address, value);
+			self.ram[(address & (memory_map::RAM_SIZE - 1)) as usize] = value;
 		} else if address < memory_map::APU_IO_START {
-			self.ppu.write(address, value);
+			hw.ppu.write(hw.cartridge, address, value);
 		} else if address < memory_map::CARTRIDGE_START {
 			// TODO
 		} else {
-			self.cartridge.write_cpu(address, value);
+			hw.cartridge.write_cpu(address, value);
 		}
 	}
 
-	pub fn read_memory(&mut self, address: u16) -> u8 {
+	pub fn read_memory(&self, hw: &mut Hardware, address: u16) -> u8 {
 		if address < memory_map::PPU_START {
-			self.memory.read(address)
+			self.ram[(address & (memory_map::RAM_SIZE - 1)) as usize]
 		} else if address < memory_map::APU_IO_START {
-			self.ppu.read(address)
+			hw.ppu.read(hw.cartridge, address)
 		} else if address < memory_map::CARTRIDGE_START {
 			// TODO
+			//hw.apu.read(address)
 			0
 		} else {
-			self.cartridge.read_cpu(address)
+			hw.cartridge.read_cpu(address)
 		}
 	}
 
@@ -173,26 +176,26 @@ impl Cpu {
 	}
 
 	// One CPU tick.
-	pub fn tick(&mut self, instr_log: &mut Option<&mut Write>) {
+	pub fn tick(&mut self, hw: &mut Hardware, instr_log: &mut Option<&mut Write>) {
 		// fetch PC
 		let mut pc = self.registers.pc;
 
 		// decode
 		let mut opcode = [0, 0, 0];
-		opcode[0] = self.read_memory(pc);
+		opcode[0] = self.read_memory(hw, pc);
 		pc = pc.wrapping_add(1);
 		let opcode_size = INSTRUCTION_SIZES[opcode[0] as usize];
 		match opcode_size {
 			1 => {}
 			2 => {
-				opcode[1] = self.read_memory(pc);
+				opcode[1] = self.read_memory(hw, pc);
 				pc = pc.wrapping_add(1);
 				self.opcode8 = opcode[1];
 			}
 			3 => {
-				opcode[1] = self.read_memory(pc);
+				opcode[1] = self.read_memory(hw, pc);
 				pc = pc.wrapping_add(1);
-				opcode[2] = self.read_memory(pc);
+				opcode[2] = self.read_memory(hw, pc);
 				pc = pc.wrapping_add(1);
 				self.opcode16 = ((opcode[2] as u16) << 8) | (opcode[1] as u16);
 			}
@@ -223,6 +226,6 @@ impl Cpu {
 
 		// execute
 		self.registers.pc = pc;
-		instruction.execute(self);
+		instruction.execute(self, hw);
 	}
 }

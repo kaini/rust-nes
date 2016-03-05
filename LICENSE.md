@@ -1,3 +1,12 @@
+                                  NOTE
+
+The ROMs in the roms subdiretory are NOT covered by this license! They
+are licensed by their respecitve owners and are only redistributed in
+this repository to be able to run the test suite.
+For details and sources please see roms/CREDITS.
+
+
+
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 

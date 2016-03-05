@@ -2,11 +2,26 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::io;
 use std::borrow::Borrow;
-use mappers;
+use cartridge::mmc1::Mmc1;
+use cartridge::nrom::NRom;
+
+#[derive(Debug, Clone)]
+pub enum MirrorMode {
+	HorizontalMirroring,
+	VerticalMirroring,
+	FourScreen,
+}
 
 pub trait Cartridge {
 	fn read_cpu(&mut self, addr: u16) -> u8;
 	fn write_cpu(&mut self, addr: u16, value: u8);
+
+	// Attention: These have to handle reads and writes from 0x0000-0x3EFF,
+	// although - strictly speaking - some of these memory areas would be
+	// managed by the PPU itself.
+	fn read_ppu(&mut self, addr: u16) -> u8;
+	fn write_ppu(&mut self, addr: u16, value: u8);
+	fn mirror_mode(&self) -> MirrorMode;
 }
 
 pub fn load_rom(path: &str) -> Result<Box<Cartridge>, &'static str> {
@@ -93,17 +108,10 @@ fn load_ines(file: &mut File) -> io::Result<Box<Cartridge>> {
 		mirror_mode, persistent, trainer);
 
 	match mapper {
-		000 => Result::Ok(Box::new(mappers::NRom::new(prg_rom, chr_rom, ram_size))),
-		001 => Result::Ok(Box::new(mappers::Mmc1::new(prg_rom, chr_rom, ram_size))),
+		000 => Result::Ok(Box::new(NRom::new(prg_rom, chr_rom, ram_size, mirror_mode))),
+		001 => Result::Ok(Box::new(Mmc1::new(prg_rom, chr_rom, ram_size))),
 		_   => parse_error(format!("Unsupported ROM mapper {:03}.", mapper).borrow()),
 	}
-}
-
-#[derive(Debug)]
-enum MirrorMode {
-	HorizontalMirroring,
-	VerticalMirroring,
-	FourScreen,
 }
 
 fn parse_error<T>(error: &str) -> io::Result<T> {

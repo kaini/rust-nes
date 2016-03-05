@@ -1,24 +1,24 @@
-use cpu::{Cpu, STACK_START};
+use cpu::cpu::{Cpu, Hardware, STACK_START};
 use std::marker::PhantomData;
 use std::io::Write;
 
 trait AddrMode {
-	fn decode(cpu: &mut Cpu) -> Self;
-	fn read(&self, cpu: &mut Cpu) -> u8;
-	fn write(&self, cpu: &mut Cpu, value: u8);
+	fn decode(cpu: &mut Cpu, hw: &mut Hardware) -> Self;
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8;
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8);
 	fn asm_str(cpu: &Cpu) -> String;
 }
 
 // Access A.
 struct AddrAccumulator;
 impl AddrMode for AddrAccumulator {
-	fn decode(_: &mut Cpu) -> AddrAccumulator {
+	fn decode(_: &mut Cpu, _: &mut Hardware) -> AddrAccumulator {
 		AddrAccumulator
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
+	fn read(&self, cpu: &mut Cpu, _: &mut Hardware) -> u8 {
 		cpu.registers().a
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
+	fn write(&self, cpu: &mut Cpu, _: &mut Hardware, value: u8) {
 		cpu.registers_mut().a = value;
 	}
 	fn asm_str(_: &Cpu) -> String {
@@ -31,13 +31,13 @@ struct AddrImmediate {
 	value: u8,
 }
 impl AddrMode for AddrImmediate {
-	fn decode(cpu: &mut Cpu) -> AddrImmediate {
+	fn decode(cpu: &mut Cpu, _: &mut Hardware) -> AddrImmediate {
 		AddrImmediate { value: cpu.opcode8() }
 	}
-	fn read(&self, _: &mut Cpu) -> u8 {
+	fn read(&self, _: &mut Cpu, _: &mut Hardware) -> u8 {
 		self.value
 	}
-	fn write(&self, _: &mut Cpu, _: u8) {
+	fn write(&self, _: &mut Cpu, _: &mut Hardware, _: u8) {
 		unreachable!();
 	}
 	fn asm_str(cpu: &Cpu) -> String {
@@ -50,14 +50,14 @@ struct AddrZeroPage {
 	addr: u16,
 }
 impl AddrMode for AddrZeroPage {
-	fn decode(cpu: &mut Cpu) -> AddrZeroPage {
+	fn decode(cpu: &mut Cpu, _: &mut Hardware) -> AddrZeroPage {
 		AddrZeroPage { addr: cpu.opcode8() as u16 }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("${:02X}", cpu.opcode8())
@@ -69,14 +69,14 @@ struct AddrZeroPageX {
 	addr: u16,
 }
 impl AddrMode for AddrZeroPageX {
-	fn decode(cpu: &mut Cpu) -> AddrZeroPageX {
+	fn decode(cpu: &mut Cpu, _: &mut Hardware) -> AddrZeroPageX {
 		AddrZeroPageX { addr: (cpu.opcode8().wrapping_add(cpu.registers().x)) as u16 }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("${:02X},X", cpu.opcode8())
@@ -88,14 +88,14 @@ struct AddrZeroPageY {
 	addr: u16,
 }
 impl AddrMode for AddrZeroPageY {
-	fn decode(cpu: &mut Cpu) -> AddrZeroPageY {
+	fn decode(cpu: &mut Cpu, _: &mut Hardware) -> AddrZeroPageY {
 		AddrZeroPageY { addr: (cpu.opcode8().wrapping_add(cpu.registers().y)) as u16 }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("${:02X},Y", cpu.opcode8())
@@ -107,14 +107,14 @@ struct AddrAbsolute {
 	addr: u16,
 }
 impl AddrMode for AddrAbsolute {
-	fn decode(cpu: &mut Cpu) -> AddrAbsolute {
+	fn decode(cpu: &mut Cpu, _: &mut Hardware) -> AddrAbsolute {
 		AddrAbsolute { addr: cpu.opcode16() }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("${:04X}", cpu.opcode16())
@@ -126,15 +126,15 @@ struct AddrAbsoluteX {
 	addr: u16,
 }
 impl AddrMode for AddrAbsoluteX {
-	fn decode(cpu: &mut Cpu) -> AddrAbsoluteX {
+	fn decode(cpu: &mut Cpu, _: &mut Hardware) -> AddrAbsoluteX {
 		let offset = cpu.registers().x as u16;
 		AddrAbsoluteX { addr: cpu.opcode16().wrapping_add(offset) }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("${:04X},X", cpu.opcode16())
@@ -146,15 +146,15 @@ struct AddrAbsoluteY {
 	addr: u16,
 }
 impl AddrMode for AddrAbsoluteY {
-	fn decode(cpu: &mut Cpu) -> AddrAbsoluteY {
+	fn decode(cpu: &mut Cpu, _: &mut Hardware) -> AddrAbsoluteY {
 		let offset = cpu.registers().y as u16;
 		AddrAbsoluteY { addr: cpu.opcode16().wrapping_add(offset) }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("${:04X},Y", cpu.opcode16())
@@ -166,17 +166,17 @@ struct AddrIndirectX {
 	addr: u16,
 }
 impl AddrMode for AddrIndirectX {
-	fn decode(cpu: &mut Cpu) -> AddrIndirectX {
+	fn decode(cpu: &mut Cpu, hw: &mut Hardware) -> AddrIndirectX {
 		let iaddr = cpu.opcode8().wrapping_add(cpu.registers().x);
-		let addr_lo = cpu.read_memory(iaddr as u16) as u16;
-		let addr_hi = cpu.read_memory(iaddr.wrapping_add(1) as u16) as u16;
+		let addr_lo = cpu.read_memory(hw, iaddr as u16) as u16;
+		let addr_hi = cpu.read_memory(hw, iaddr.wrapping_add(1) as u16) as u16;
 		AddrIndirectX { addr: (addr_hi << 8) | addr_lo }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("(${:02X},X)", cpu.opcode8())
@@ -188,18 +188,18 @@ struct AddrIndirectY {
 	addr: u16,
 }
 impl AddrMode for AddrIndirectY {
-	fn decode(cpu: &mut Cpu) -> AddrIndirectY {
+	fn decode(cpu: &mut Cpu, hw: &mut Hardware) -> AddrIndirectY {
 		let iaddr = cpu.opcode8();
-		let addr_lo = cpu.read_memory(iaddr as u16) as u16;
-		let addr_hi = cpu.read_memory(iaddr.wrapping_add(1) as u16) as u16;
+		let addr_lo = cpu.read_memory(hw, iaddr as u16) as u16;
+		let addr_hi = cpu.read_memory(hw, iaddr.wrapping_add(1) as u16) as u16;
 		let offset = cpu.registers().y as u16;
 		AddrIndirectY { addr: ((addr_hi << 8) | addr_lo).wrapping_add(offset) }
 	}
-	fn read(&self, cpu: &mut Cpu) -> u8 {
-		cpu.read_memory(self.addr)
+	fn read(&self, cpu: &mut Cpu, hw: &mut Hardware) -> u8 {
+		cpu.read_memory(hw, self.addr)
 	}
-	fn write(&self, cpu: &mut Cpu, value: u8) {
-		cpu.write_memory(self.addr, value);
+	fn write(&self, cpu: &mut Cpu, hw: &mut Hardware, value: u8) {
+		cpu.write_memory(hw, self.addr, value);
 	}
 	fn asm_str(cpu: &Cpu) -> String {
 		format!("(${:02X}),Y", cpu.opcode8())
@@ -209,7 +209,7 @@ impl AddrMode for AddrIndirectY {
 // Represents a single operation.
 pub trait Instruction {
 	// Execute the operation.
-	fn execute(&self, cpu: &mut Cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware);
 	// Print the instruction
 	fn asm_str(&self, cpu: &Cpu) -> String;
 }
@@ -219,9 +219,9 @@ struct OpADC<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpADC<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let a = cpu.registers().a as u16;
-		let src = A::decode(cpu).read(cpu) as u16;
+		let src = A::decode(cpu, hw).read(cpu, hw) as u16;
 		let result = a + src + (cpu.registers().p.carry as u16);
 		cpu.registers_mut().a = result as u8;
 		cpu.registers_mut().p.carry = result > 0xFF;
@@ -239,9 +239,9 @@ struct OpALR<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpALR<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpAND::<A>{ phantom: PhantomData }.execute(cpu);
-		OpLSR::<AddrAccumulator>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpAND::<A>{ phantom: PhantomData }.execute(cpu, hw);
+		OpLSR::<AddrAccumulator>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("ALR {}", A::asm_str(cpu))
@@ -253,8 +253,8 @@ struct OpANC<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpANC<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpAND::<A>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpAND::<A>{ phantom: PhantomData }.execute(cpu, hw);
 		cpu.registers_mut().p.carry = cpu.registers().p.negative;
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
@@ -267,8 +267,8 @@ struct OpAND<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpAND<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let result = cpu.registers().a & A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let result = cpu.registers().a & A::decode(cpu, hw).read(cpu, hw);
 		cpu.registers_mut().a = result;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -283,9 +283,9 @@ struct OpARR<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpARR<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let result = 
-			((cpu.registers().a & A::decode(cpu).read(cpu)) >> 1) |
+			((cpu.registers().a & A::decode(cpu, hw).read(cpu, hw)) >> 1) |
 			if cpu.registers().p.carry { 0b10000000 } else { 0 };
 		cpu.registers_mut().a = result;
 		cpu.registers_mut().p.zero = result == 0;
@@ -303,11 +303,11 @@ struct OpASL<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpASL<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let access = A::decode(cpu);
-		let src = access.read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let access = A::decode(cpu, hw);
+		let src = access.read(cpu, hw);
 		let result = src << 1;
-		access.write(cpu, result);
+		access.write(cpu, hw, result);
 		cpu.registers_mut().p.carry = src & 0x80 != 0;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -322,10 +322,10 @@ struct OpAXS<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpAXS<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		cpu.registers_mut().a = cpu.registers().a & cpu.registers().x;
 		cpu.registers_mut().p.carry = true;
-		OpSBC::<A>{ phantom: PhantomData }.execute(cpu);
+		OpSBC::<A>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("AXS {}", A::asm_str(cpu))
@@ -335,7 +335,7 @@ impl<A: AddrMode> Instruction for OpAXS<A> {
 // Branch if carry clear.
 struct OpBCC;
 impl Instruction for OpBCC {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if !cpu.registers().p.carry {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -349,7 +349,7 @@ impl Instruction for OpBCC {
 // Branch if carry set.
 struct OpBCS;
 impl Instruction for OpBCS {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if cpu.registers().p.carry {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -363,7 +363,7 @@ impl Instruction for OpBCS {
 // Branch if equal.
 struct OpBEQ;
 impl Instruction for OpBEQ {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if cpu.registers().p.zero {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -379,8 +379,8 @@ struct OpBIT<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpBIT<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let src = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let src = A::decode(cpu, hw).read(cpu, hw);
 		let result = cpu.registers().a & src;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.overflow = src & 0x40 != 0;
@@ -394,7 +394,7 @@ impl<A: AddrMode> Instruction for OpBIT<A> {
 // Branch if minus.
 struct OpBMI;
 impl Instruction for OpBMI {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if cpu.registers().p.negative {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -408,7 +408,7 @@ impl Instruction for OpBMI {
 // Branch if not equal.
 struct OpBNE;
 impl Instruction for OpBNE {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if !cpu.registers().p.zero {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -422,7 +422,7 @@ impl Instruction for OpBNE {
 // Branch if positive.
 struct OpBPL;
 impl Instruction for OpBPL {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if !cpu.registers().p.negative {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -436,8 +436,8 @@ impl Instruction for OpBPL {
 // Force interrupt
 struct OpBRK;
 impl Instruction for OpBRK {
-	fn execute(&self, cpu: &mut Cpu) {
-		cpu.jump_to_interrupt(true);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		cpu.jump_to_interrupt(hw, true);
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
 		String::from("BRK")
@@ -447,7 +447,7 @@ impl Instruction for OpBRK {
 // Branch if overflow clear.
 struct OpBVC;
 impl Instruction for OpBVC {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if !cpu.registers().p.overflow {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -461,7 +461,7 @@ impl Instruction for OpBVC {
 // Branch if overflow set.
 struct OpBVS;
 impl Instruction for OpBVS {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let offset = cpu.opcode8() as i8 as i16 as u16;
 		if cpu.registers().p.overflow {
 			cpu.registers_mut().pc = cpu.registers().pc.wrapping_add(offset);
@@ -475,7 +475,7 @@ impl Instruction for OpBVS {
 // Clear carry flag.
 struct OpCLC;
 impl Instruction for OpCLC {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().p.carry = false;
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -486,7 +486,7 @@ impl Instruction for OpCLC {
 // Clear decimal mode.
 struct OpCLD;
 impl Instruction for OpCLD {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().p.decimal = false;
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -497,7 +497,7 @@ impl Instruction for OpCLD {
 // Clear interrupt disable.
 struct OpCLI;
 impl Instruction for OpCLI {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().p.interrupt = false;
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -508,7 +508,7 @@ impl Instruction for OpCLI {
 // Clear overflow flag.
 struct OpCLV;
 impl Instruction for OpCLV {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().p.overflow = false;
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -521,8 +521,8 @@ struct OpCMP<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpCMP<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let src = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let src = A::decode(cpu, hw).read(cpu, hw);
 		let result = cpu.registers().a.wrapping_add((!src).wrapping_add(1));
 		cpu.registers_mut().p.carry = cpu.registers().a >= src;
 		cpu.registers_mut().p.zero = result == 0;
@@ -538,8 +538,8 @@ struct OpCPX<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpCPX<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let src = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let src = A::decode(cpu, hw).read(cpu, hw);
 		let result = cpu.registers().x.wrapping_add((!src).wrapping_add(1));
 		cpu.registers_mut().p.carry = cpu.registers().x >= src;
 		cpu.registers_mut().p.zero = result == 0;
@@ -555,8 +555,8 @@ struct OpCPY<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpCPY<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let src = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let src = A::decode(cpu, hw).read(cpu, hw);
 		let result = cpu.registers().y.wrapping_add((!src).wrapping_add(1));
 		cpu.registers_mut().p.carry = cpu.registers().y >= src;
 		cpu.registers_mut().p.zero = result == 0;
@@ -572,9 +572,9 @@ struct OpDCP<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpDCP<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpDEC::<A>{ phantom: PhantomData }.execute(cpu);
-		OpCMP::<A>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpDEC::<A>{ phantom: PhantomData }.execute(cpu, hw);
+		OpCMP::<A>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("DCP {}", A::asm_str(cpu))
@@ -586,10 +586,10 @@ struct OpDEC<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpDEC<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let access = A::decode(cpu);
-		let result = access.read(cpu).wrapping_sub(1);
-		access.write(cpu, result);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let access = A::decode(cpu, hw);
+		let result = access.read(cpu, hw).wrapping_sub(1);
+		access.write(cpu, hw, result);
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
 	}
@@ -601,7 +601,7 @@ impl<A: AddrMode> Instruction for OpDEC<A> {
 // Decrement X
 struct OpDEX;
 impl Instruction for OpDEX {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let result = cpu.registers().x.wrapping_sub(1);
 		cpu.registers_mut().x = result;
 		cpu.registers_mut().p.zero = result == 0;
@@ -615,7 +615,7 @@ impl Instruction for OpDEX {
 // Decrement Y
 struct OpDEY;
 impl Instruction for OpDEY {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let result = cpu.registers().y.wrapping_sub(1);
 		cpu.registers_mut().y = result;
 		cpu.registers_mut().p.zero = result == 0;
@@ -631,8 +631,8 @@ struct OpEOR<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpEOR<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let result = cpu.registers().a ^ A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let result = cpu.registers().a ^ A::decode(cpu, hw).read(cpu, hw);
 		cpu.registers_mut().a = result;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -647,10 +647,10 @@ struct OpINC<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpINC<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let access = A::decode(cpu);
-		let result = access.read(cpu).wrapping_add(1);
-		access.write(cpu, result);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let access = A::decode(cpu, hw);
+		let result = access.read(cpu, hw).wrapping_add(1);
+		access.write(cpu, hw, result);
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
 	}
@@ -662,7 +662,7 @@ impl<A: AddrMode> Instruction for OpINC<A> {
 // Increment X
 struct OpINX;
 impl Instruction for OpINX {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let result = cpu.registers().x.wrapping_add(1);
 		cpu.registers_mut().x = result;
 		cpu.registers_mut().p.zero = result == 0;
@@ -676,7 +676,7 @@ impl Instruction for OpINX {
 // Increment Y
 struct OpINY;
 impl Instruction for OpINY {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let result = cpu.registers().y.wrapping_add(1);
 		cpu.registers_mut().y = result;
 		cpu.registers_mut().p.zero = result == 0;
@@ -690,7 +690,7 @@ impl Instruction for OpINY {
 // Jump (absolute).
 struct OpJMPAbsolute;
 impl Instruction for OpJMPAbsolute {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().pc = cpu.opcode16();
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
@@ -701,11 +701,11 @@ impl Instruction for OpJMPAbsolute {
 // Jump (indirect).
 struct OpJMPIndirect;
 impl Instruction for OpJMPIndirect {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let iaddr_hi = cpu.opcode16() & 0xFF00;
 		let iaddr_lo = cpu.opcode16() & 0x00FF;
-		let addr_lo = cpu.read_memory(iaddr_hi | iaddr_lo) as u16;
-		let addr_hi = cpu.read_memory(iaddr_hi | ((iaddr_lo + 1) & 0xFF)) as u16;
+		let addr_lo = cpu.read_memory(hw, iaddr_hi | iaddr_lo) as u16;
+		let addr_hi = cpu.read_memory(hw, iaddr_hi | ((iaddr_lo + 1) & 0xFF)) as u16;
 		cpu.registers_mut().pc = (addr_hi << 8) | addr_lo;
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
@@ -718,9 +718,9 @@ struct OpISB<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpISB<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpINC::<A>{ phantom: PhantomData }.execute(cpu);
-		OpSBC::<A>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpINC::<A>{ phantom: PhantomData }.execute(cpu, hw);
+		OpSBC::<A>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("ISB {}", A::asm_str(cpu))
@@ -730,12 +730,12 @@ impl<A: AddrMode> Instruction for OpISB<A> {
 // Jump to subroutine.
 struct OpJSR;
 impl Instruction for OpJSR {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let mut sp = cpu.registers().s;
 		let pc = cpu.registers().pc.wrapping_sub(1);
-		cpu.write_memory(STACK_START + sp as u16, (pc >> 8) as u8);
+		cpu.write_memory(hw, STACK_START + sp as u16, (pc >> 8) as u8);
 		sp = sp.wrapping_sub(1);
-		cpu.write_memory(STACK_START + sp as u16, pc as u8);
+		cpu.write_memory(hw, STACK_START + sp as u16, pc as u8);
 		sp = sp.wrapping_sub(1);
 
 		let addr = cpu.opcode16();
@@ -753,8 +753,8 @@ struct OpLAX<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpLAX<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let result = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let result = A::decode(cpu, hw).read(cpu, hw);
 		cpu.registers_mut().a = result;
 		cpu.registers_mut().x = result;
 		cpu.registers_mut().p.zero = result == 0;
@@ -770,8 +770,8 @@ struct OpLDA<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpLDA<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let result = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let result = A::decode(cpu, hw).read(cpu, hw);
 		cpu.registers_mut().a = result;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -786,8 +786,8 @@ struct OpLDX<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpLDX<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let result = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let result = A::decode(cpu, hw).read(cpu, hw);
 		cpu.registers_mut().x = result;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -802,8 +802,8 @@ struct OpLDY<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpLDY<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let result = A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let result = A::decode(cpu, hw).read(cpu, hw);
 		cpu.registers_mut().y = result;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -818,7 +818,7 @@ struct OpNOPMulti<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpNOPMulti<A> {
-	fn execute(&self, _: &mut Cpu) {
+	fn execute(&self, _: &mut Cpu, _: &mut Hardware) {
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("NOP {}", A::asm_str(cpu))
@@ -828,7 +828,7 @@ impl<A: AddrMode> Instruction for OpNOPMulti<A> {
 // No operation.
 struct OpNOPSingle;
 impl Instruction for OpNOPSingle {
-	fn execute(&self, _: &mut Cpu) {
+	fn execute(&self, _: &mut Cpu, _: &mut Hardware) {
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
 		String::from("NOP")
@@ -840,11 +840,11 @@ struct OpLSR<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpLSR<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let access = A::decode(cpu);
-		let src = access.read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let access = A::decode(cpu, hw);
+		let src = access.read(cpu, hw);
 		let result = src >> 1;
-		access.write(cpu, result);
+		access.write(cpu, hw, result);
 		cpu.registers_mut().p.carry = src & 1 != 0;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -859,8 +859,8 @@ struct OpORA<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpORA<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let result = cpu.registers().a | A::decode(cpu).read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let result = cpu.registers().a | A::decode(cpu, hw).read(cpu, hw);
 		cpu.registers_mut().a = result;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -873,10 +873,10 @@ impl<A: AddrMode> Instruction for OpORA<A> {
 // Push accumulator
 struct OpPHA;
 impl Instruction for OpPHA {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let sp = cpu.registers().s;
 		let value = cpu.registers().a;
-		cpu.write_memory(STACK_START + sp as u16, value);
+		cpu.write_memory(hw, STACK_START + sp as u16, value);
 		cpu.registers_mut().s = sp.wrapping_sub(1);
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -887,10 +887,10 @@ impl Instruction for OpPHA {
 // Push processor status
 struct OpPHP;
 impl Instruction for OpPHP {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let sp = cpu.registers().s;
 		let value = cpu.registers().p.value(true);
-		cpu.write_memory(STACK_START + sp as u16, value);
+		cpu.write_memory(hw, STACK_START + sp as u16, value);
 		cpu.registers_mut().s = sp.wrapping_sub(1);
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -901,9 +901,9 @@ impl Instruction for OpPHP {
 // Pull accumulator
 struct OpPLA;
 impl Instruction for OpPLA {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let sp = cpu.registers().s.wrapping_add(1);
-		let value = cpu.read_memory(STACK_START + sp as u16);
+		let value = cpu.read_memory(hw, STACK_START + sp as u16);
 		cpu.registers_mut().a = value;
 		cpu.registers_mut().s = sp;
 		cpu.registers_mut().p.zero = value == 0;
@@ -917,9 +917,9 @@ impl Instruction for OpPLA {
 // Pull processor status
 struct OpPLP;
 impl Instruction for OpPLP {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let sp = cpu.registers().s.wrapping_add(1);
-		let value = cpu.read_memory(STACK_START + sp as u16);
+		let value = cpu.read_memory(hw, STACK_START + sp as u16);
 		cpu.registers_mut().p.set_value(value);
 		cpu.registers_mut().s = sp;
 	}
@@ -933,9 +933,9 @@ struct OpRLA<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpRLA<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpROL::<A>{ phantom: PhantomData }.execute(cpu);
-		OpAND::<A>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpROL::<A>{ phantom: PhantomData }.execute(cpu, hw);
+		OpAND::<A>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("RLA {}", A::asm_str(cpu))
@@ -947,11 +947,11 @@ struct OpROL<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpROL<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let access = A::decode(cpu);
-		let src = access.read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let access = A::decode(cpu, hw);
+		let src = access.read(cpu, hw);
 		let result = (src << 1) | cpu.registers().p.carry as u8;
-		access.write(cpu, result);
+		access.write(cpu, hw, result);
 		cpu.registers_mut().p.carry = src & 0x80 != 0;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -966,11 +966,11 @@ struct OpROR<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpROR<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		let access = A::decode(cpu);
-		let src = access.read(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		let access = A::decode(cpu, hw);
+		let src = access.read(cpu, hw);
 		let result = (src >> 1) | ((cpu.registers().p.carry as u8) << 7);
-		access.write(cpu, result);
+		access.write(cpu, hw, result);
 		cpu.registers_mut().p.carry = src & 1 != 0;
 		cpu.registers_mut().p.zero = result == 0;
 		cpu.registers_mut().p.negative = result & 0x80 != 0;
@@ -985,9 +985,9 @@ struct OpRRA<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpRRA<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpROR::<A>{ phantom: PhantomData }.execute(cpu);
-		OpADC::<A>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpROR::<A>{ phantom: PhantomData }.execute(cpu, hw);
+		OpADC::<A>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("RRA {}", A::asm_str(cpu))
@@ -997,14 +997,14 @@ impl<A: AddrMode> Instruction for OpRRA<A> {
 // Return from interrupt.
 struct OpRTI;
 impl Instruction for OpRTI {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let mut sp = cpu.registers().s;
 		sp = sp.wrapping_add(1);
-		let p = cpu.read_memory(STACK_START + sp as u16);
+		let p = cpu.read_memory(hw, STACK_START + sp as u16);
 		sp = sp.wrapping_add(1);
-		let addr_lo = cpu.read_memory(STACK_START + sp as u16) as u16;
+		let addr_lo = cpu.read_memory(hw, STACK_START + sp as u16) as u16;
 		sp = sp.wrapping_add(1);
-		let addr_hi = cpu.read_memory(STACK_START + sp as u16) as u16;
+		let addr_hi = cpu.read_memory(hw, STACK_START + sp as u16) as u16;
 		let addr = (addr_hi << 8) | addr_lo;
 		cpu.registers_mut().s = sp;
 		cpu.registers_mut().pc = addr;
@@ -1018,12 +1018,12 @@ impl Instruction for OpRTI {
 // Return from subroutine.
 struct OpRTS;
 impl Instruction for OpRTS {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let mut sp = cpu.registers().s;
 		sp = sp.wrapping_add(1);
-		let addr_lo = cpu.read_memory(STACK_START + sp as u16) as u16;
+		let addr_lo = cpu.read_memory(hw, STACK_START + sp as u16) as u16;
 		sp = sp.wrapping_add(1);
-		let addr_hi = cpu.read_memory(STACK_START + sp as u16) as u16;
+		let addr_hi = cpu.read_memory(hw, STACK_START + sp as u16) as u16;
 		let addr = ((addr_hi << 8) | addr_lo).wrapping_add(1);
 		cpu.registers_mut().s = sp;
 		cpu.registers_mut().pc = addr;
@@ -1038,9 +1038,9 @@ struct OpSAX<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpSAX<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let value = cpu.registers().a & cpu.registers().x;
-		A::decode(cpu).write(cpu, value);
+		A::decode(cpu, hw).write(cpu, hw, value);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("SAX {}", A::asm_str(cpu))
@@ -1052,9 +1052,9 @@ struct OpSBC<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpSBC<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let a = cpu.registers().a as u16;
-		let src = A::decode(cpu).read(cpu) as u16;
+		let src = A::decode(cpu, hw).read(cpu, hw) as u16;
 		let carry = 1 - cpu.registers().p.carry as u16;
 		let result = a.wrapping_sub(src).wrapping_sub(carry);
 		cpu.registers_mut().a = result as u8;
@@ -1071,7 +1071,7 @@ impl<A: AddrMode> Instruction for OpSBC<A> {
 // Set carry flag.
 struct OpSEC;
 impl Instruction for OpSEC {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().p.carry = true;
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -1082,7 +1082,7 @@ impl Instruction for OpSEC {
 // Set decimal flag.
 struct OpSED;
 impl Instruction for OpSED {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().p.decimal = true;
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -1093,7 +1093,7 @@ impl Instruction for OpSED {
 // Set interrupt disable flag.
 struct OpSEI;
 impl Instruction for OpSEI {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		cpu.registers_mut().p.interrupt = true;
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
@@ -1106,9 +1106,9 @@ struct OpSLO<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpSLO<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpASL::<A>{ phantom: PhantomData }.execute(cpu);
-		OpORA::<A>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpASL::<A>{ phantom: PhantomData }.execute(cpu, hw);
+		OpORA::<A>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("SLO {}", A::asm_str(cpu))
@@ -1120,9 +1120,9 @@ struct OpSRE<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpSRE<A> {
-	fn execute(&self, cpu: &mut Cpu) {
-		OpLSR::<A>{ phantom: PhantomData }.execute(cpu);
-		OpEOR::<A>{ phantom: PhantomData }.execute(cpu);
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
+		OpLSR::<A>{ phantom: PhantomData }.execute(cpu, hw);
+		OpEOR::<A>{ phantom: PhantomData }.execute(cpu, hw);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("SRE {}", A::asm_str(cpu))
@@ -1134,9 +1134,9 @@ struct OpSTA<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpSTA<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let value = cpu.registers().a;
-		A::decode(cpu).write(cpu, value);
+		A::decode(cpu, hw).write(cpu, hw, value);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("STA {}", A::asm_str(cpu))
@@ -1148,9 +1148,9 @@ struct OpSTX<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpSTX<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let value = cpu.registers().x;
-		A::decode(cpu).write(cpu, value);
+		A::decode(cpu, hw).write(cpu, hw, value);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("STX {}", A::asm_str(cpu))
@@ -1162,9 +1162,9 @@ struct OpSTY<A: AddrMode> {
 	phantom: PhantomData<A>,
 }
 impl<A: AddrMode> Instruction for OpSTY<A> {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, hw: &mut Hardware) {
 		let value = cpu.registers().y;
-		A::decode(cpu).write(cpu, value);
+		A::decode(cpu, hw).write(cpu, hw, value);
 	}
 	fn asm_str(&self, cpu: &Cpu) -> String {
 		format!("STY {}", A::asm_str(cpu))
@@ -1174,7 +1174,7 @@ impl<A: AddrMode> Instruction for OpSTY<A> {
 // Transfer accumulator to X.
 struct OpTAX;
 impl Instruction for OpTAX {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let value = cpu.registers().a;
 		cpu.registers_mut().x = value;
 		cpu.registers_mut().p.zero = value == 0;
@@ -1188,7 +1188,7 @@ impl Instruction for OpTAX {
 // Transfer accumulator to Y.
 struct OpTAY;
 impl Instruction for OpTAY {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let value = cpu.registers().a;
 		cpu.registers_mut().y = value;
 		cpu.registers_mut().p.zero = value == 0;
@@ -1202,7 +1202,7 @@ impl Instruction for OpTAY {
 // Transfer stack pointer to X.
 struct OpTSX;
 impl Instruction for OpTSX {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let value = cpu.registers().s;
 		cpu.registers_mut().x = value;
 		cpu.registers_mut().p.zero = value == 0;
@@ -1216,7 +1216,7 @@ impl Instruction for OpTSX {
 // Transfer X to accumulator.
 struct OpTXA;
 impl Instruction for OpTXA {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let value = cpu.registers().x;
 		cpu.registers_mut().a = value;
 		cpu.registers_mut().p.zero = value == 0;
@@ -1230,7 +1230,7 @@ impl Instruction for OpTXA {
 // Transfer X to stack pointer.
 struct OpTXS;
 impl Instruction for OpTXS {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let value = cpu.registers().x;
 		cpu.registers_mut().s = value;
 	}
@@ -1242,7 +1242,7 @@ impl Instruction for OpTXS {
 // Transfer Y to accumulator.
 struct OpTYA;
 impl Instruction for OpTYA {
-	fn execute(&self, cpu: &mut Cpu) {
+	fn execute(&self, cpu: &mut Cpu, _: &mut Hardware) {
 		let value = cpu.registers().y;
 		cpu.registers_mut().a = value;
 		cpu.registers_mut().p.zero = value == 0;
@@ -1256,7 +1256,7 @@ impl Instruction for OpTYA {
 // TODO Inofficial Instructions
 struct OpTODO;
 impl Instruction for OpTODO {
-	fn execute(&self, _: &mut Cpu) {
+	fn execute(&self, _: &mut Cpu, _: &mut Hardware) {
 		unimplemented!()
 	}
 	fn asm_str(&self, _: &Cpu) -> String {
